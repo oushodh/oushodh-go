@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (12 Nov, 2026)
 
 - First version of the Go SDK for the Oushodh API `/v1`.
 - `NewClient` with `WithAPIKey`, `WithBaseURL`, `WithHTTPClient`, `WithTimeout` and `WithMaxRetries`.
