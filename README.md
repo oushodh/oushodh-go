@@ -15,13 +15,11 @@ The SDK needs Go 1.27 or newer. It uses only the standard library, and every cal
 
 ## Install
 
-Install it from GitHub:
+Install it with `go get`:
 
 ```sh
 go get github.com/oushodh/oushodh-go
 ```
-
-Install of a tagged release is coming soon.
 
 ## Quickstart
 
