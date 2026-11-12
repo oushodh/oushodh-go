@@ -9,15 +9,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
-	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/oushodh/oushodh-go/internal/transport"
 )
 
 // Version is the SDK's version. It goes in the User-Agent header.
@@ -231,120 +231,20 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, auth bo
 		target += "?" + query.Encode()
 	}
 
-	for attempt := 0; ; attempt++ {
-		body, err := c.send(ctx, target, auth)
-
-		if err == nil {
-			return body, nil
-		}
-
-		delay, retry := c.delay(err, attempt)
-
-		if !retry || ctx.Err() != nil {
-			return nil, err
-		}
-
-		timer := time.NewTimer(delay)
-
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-
-			return nil, err
-		case <-timer.C:
-		}
+	t := transport.Transport{
+		HTTP:       c.http,
+		APIKey:     c.apiKey,
+		UserAgent:  "oushodh-go/" + Version,
+		Timeout:    c.timeout,
+		MaxRetries: c.maxRetries,
 	}
-}
+	body, err := t.Get(ctx, target, auth)
 
-func (c *Client) send(ctx context.Context, target string, auth bool) ([]byte, error) {
-	if c.timeout > 0 {
-		var cancel context.CancelFunc
+	var e *transport.Error
 
-		ctx, cancel = context.WithTimeout(ctx, c.timeout)
-		defer cancel()
+	if errors.As(err, &e) {
+		return nil, &Error{Status: e.Status, Code: e.Code, Message: e.Message, RetryAfter: e.RetryAfter, err: e.Err}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-
-	if err != nil {
-		return nil, &Error{Message: err.Error(), err: err}
-	}
-
-	req.Header.Set("User-Agent", "oushodh-go/"+Version)
-
-	if auth {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("Accept", "application/json")
-	}
-
-	resp, err := c.http.Do(req)
-
-	if err != nil {
-		return nil, &Error{Message: "could not reach the API: " + err.Error(), err: err}
-	}
-
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return nil, &Error{Message: "could not read the answer: " + err.Error(), err: err}
-	}
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return body, nil
-	}
-
-	return nil, apiError(resp, body)
-}
-
-// delay says whether to retry after err, and how long to wait first.
-func (c *Client) delay(err error, attempt int) (time.Duration, bool) {
-	var e *Error
-
-	if attempt >= c.maxRetries || !errors.As(err, &e) {
-		return 0, false
-	}
-
-	switch {
-	// Only rate_limited: quota_exceeded lasts until next month, so it returns at once.
-	case e.Status == 429 && e.Code == "rate_limited":
-		if e.RetryAfter > 0 {
-			return e.RetryAfter, true
-		}
-
-		return backoff(attempt), true
-	case e.Status >= 500, e.Status == 0:
-		return backoff(attempt), true
-	}
-
-	return 0, false
-}
-
-func backoff(attempt int) time.Duration {
-	base := min(500*time.Millisecond<<attempt, 8*time.Second)
-
-	return time.Duration(float64(base) * (0.5 + rand.Float64()/2))
-}
-
-func apiError(resp *http.Response, body []byte) *Error {
-	var payload struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	e := &Error{Status: resp.StatusCode, Message: "HTTP " + strconv.Itoa(resp.StatusCode)}
-
-	if json.Unmarshal(body, &payload) == nil && payload.Error.Code != "" {
-		e.Code = payload.Error.Code
-		e.Message = payload.Error.Message
-	}
-
-	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
-		e.RetryAfter = time.Duration(seconds) * time.Second
-	}
-
-	return e
+	return body, err
 }
